@@ -544,14 +544,14 @@
                 <div id="optimizedResults" class="form-group" style="display: none;">
                     <h3>Batch Assignment Preview</h3>
                     <table class="data-table" id="batchTable">
-                    <thead>
-                        <tr>
-                        <th>Email</th>
-                        <th>Open Time</th>
-                        <th>Assigned Batch</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Open Time</th>
+                                <th>Assigned Batch</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
                     </table>
                     <div class="form-group" style="margin-top: 20px;">
                         <h3>Final Email Preview</h3>
@@ -559,7 +559,7 @@
                     </div>
 
                     <div class="button-group">
-                    <button onclick="triggerOptimizedSend()">Start Scheduled Sending</button>
+                        <button id="startSendBtn" onclick="triggerOptimizedSend()" disabled>Start Scheduled Sending</button>
                     </div>
                 </div>
             </div>
@@ -595,15 +595,6 @@
                 document.getElementById('view-results-btn').disabled = true; // Disable button until selection
                 document.getElementById('selectCampaignResults').value = ''; // Reset dropdown
             } else if (tabName === 'finalize-mails') {
-                loadFinalizeCampaigns(); // ✅ this was missing
-                loadTemplateCategories();
-                variantSelect.innerHTML = '<option value="">Select a variant</option>';
-                variantSelect.disabled = true;
-                templateFileSelect.innerHTML = '<option value="">Select a template</option>';
-                templateFileSelect.disabled = true;
-                finalizedMailPreview.style.display = 'none';
-                finalizedMailActions.style.display = 'none';
-                sendFinalizedMailBtn.disabled = true;
                 // Additional actions for finalize mails tab
             }
         }
@@ -986,9 +977,7 @@
         const integrateBtn = document.getElementById('integrate-btn');
         const finalizedMailPreview = document.getElementById('finalized-mail-preview');
         const finalizedMailIframe = document.getElementById('finalizedMailIframe');
-        const finalizedMailActions = document.getElementById('finalized-mail-actions');
-        const finalizedSenderCSV = document.getElementById('finalizedSenderCSV');
-        const sendFinalizedMailBtn = document.getElementById('send-finalized-mail-btn');
+
 
         let selectedVariant = null;
         let selectedSubject = '';
@@ -1127,10 +1116,10 @@
                 if (!integrateData.success) throw new Error('Failed to integrate');
                 finalizedHtml = integrateData.finalized_html;
                 finalizedMailIframe.srcdoc = finalizedHtml;
-                document.getElementById("optimizedPreviewIframe").srcdoc = finalizedHtml;
+                const previewFrame = document.getElementById("optimizedPreviewIframe");
+                if (previewFrame) previewFrame.srcdoc = finalizedHtml;
                 finalizedMailPreview.style.display = 'block';
-                finalizedMailActions.style.display = 'block';
-                sendFinalizedMailBtn.disabled = false;
+
             } catch (error) {
                 showAlert('Error integrating: ' + error.message, 'danger');
             } finally {
@@ -1138,7 +1127,7 @@
             }
         });
 
-        // Send finalized mail
+       /* // Send finalized mail
         sendFinalizedMailBtn.addEventListener('click', async function() {
             const file = finalizedSenderCSV.files[0];
             if (!file || !finalizedHtml || !selectedSubject) {
@@ -1166,7 +1155,7 @@
             } finally {
                 hideLoading();
             }
-        });
+        }); */
 
         // Load data when Finalize Mails tab is shown
         document.querySelector('.tab-button[onclick="showTab(\'finalize-mails\')"]').addEventListener('click', function() {
@@ -1177,8 +1166,7 @@
             templateFileSelect.innerHTML = '<option value="">Select a template</option>';
             templateFileSelect.disabled = true;
             finalizedMailPreview.style.display = 'none';
-            finalizedMailActions.style.display = 'none';
-            sendFinalizedMailBtn.disabled = true;
+
         });
         
         
@@ -1213,6 +1201,7 @@
                 });
 
                 document.getElementById("optimizedResults").style.display = "block";
+                document.getElementById("startSendBtn").disabled = false;
             };
             reader.readAsText(file);
         });
