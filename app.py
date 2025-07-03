@@ -1065,7 +1065,8 @@ def send_optimized_schedule():
             "Morning Batch 2": (11, 0),
             "Evening Batch 1": (14, 0),
             "Evening Batch 2": (19, 0),
-            "Night Batch": (22, 0)
+            "Night Batch 1": (00, 30),
+            "Night Batch 2":(4, 45)
         }
 
         service = authenticate_gmail()
@@ -1095,8 +1096,12 @@ def send_optimized_schedule():
                 batch = "Evening Batch 1"
             elif datetime.time(17, 0) <= open_time < datetime.time(21, 0):
                 batch = "Evening Batch 2"
+            elif (datetime.time(21, 0) <= open_time <= datetime.time(23, 59)) or (datetime.time(0, 0) <= open_time < datetime.time(1, 0)):
+                batch = "Night Batch 1"
+            elif datetime.time(1, 0) <= open_time < datetime.time(6, 0):
+                batch = "Night Batch 2"
             else:
-                batch = "Night Batch"
+                batch = "Unknown Batch"
 
             batches_to_process[batch].append(email)
 
