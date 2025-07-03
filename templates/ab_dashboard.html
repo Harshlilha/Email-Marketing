@@ -595,6 +595,15 @@
                 document.getElementById('view-results-btn').disabled = true; // Disable button until selection
                 document.getElementById('selectCampaignResults').value = ''; // Reset dropdown
             } else if (tabName === 'finalize-mails') {
+                loadFinalizeCampaigns(); // ✅ this was missing
+                loadTemplateCategories();
+                variantSelect.innerHTML = '<option value="">Select a variant</option>';
+                variantSelect.disabled = true;
+                templateFileSelect.innerHTML = '<option value="">Select a template</option>';
+                templateFileSelect.disabled = true;
+                finalizedMailPreview.style.display = 'none';
+                finalizedMailActions.style.display = 'none';
+                sendFinalizedMailBtn.disabled = true;
                 // Additional actions for finalize mails tab
             }
         }
