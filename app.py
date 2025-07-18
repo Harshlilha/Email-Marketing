@@ -31,7 +31,7 @@ try:
 except ImportError:
     print('python-dotenv not installed; .env file will not be loaded automatically.')
 
-app = Flask(_name_)
+app = Flask(__name__)
 
 # --- Configuration for Render Deployment ---
 PORT = int(os.environ.get("PORT", 5000))
@@ -177,7 +177,7 @@ HF_API_URL = f"https://api-inference.huggingface.co/models/{LLAMA_MODEL}"
 HF_TOKEN = os.getenv('HUGGINGFACE_API_TOKEN', 'your_huggingface_api_token_here_if_testing_locally_without_env_var')
 
 # Ensure credentials.json and token.json are present from environment variables
-# This block should be placed at the top level of your script, after 'app = Flask(_name_)'
+# This block should be placed at the top level of your script, after 'app = Flask(__name__)'
 # These files are transiently created on Render from env vars for the Gmail API to use.
 if os.environ.get('GOOGLE_CREDENTIALS_JSON_B64'):
     try:
@@ -972,10 +972,10 @@ TEMPLATE_HTML:
 
 
 # Step 1: Remove markdown-style HTML block markers
-        if "html" in raw_html:
-            raw_html = raw_html.split("html", 1)[-1]
-        if "" in raw_html:
-            raw_html = raw_html.split("", 1)[0]
+        if "```html" in raw_html:
+            raw_html = raw_html.split("```html", 1)[-1]
+        if "```" in raw_html:
+            raw_html = raw_html.split("```", 1)[0]
 
 # Step 2: Strip typical AI wrap-up lines
         wrapup_phrases = [
@@ -1154,7 +1154,7 @@ if __name__ == '__main__':
     # This block will now only run when you execute 'python final.py' directly.
     # The init_db() call for Gunicorn is moved above.
     print("🧪 A/B Testing Email Marketing App")
-    print("✉  Gmail API Integration Ready")
+    print("✉️  Gmail API Integration Ready")
     print("📊 Campaign Tracking Enabled")
     print("🎯 Endpoints:")
     print(f"   - Main: {BASE_URL}")
