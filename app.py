@@ -13,7 +13,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+from googleapiciplient.errors import HttpError
 import uuid
 import csv
 import io
@@ -270,13 +270,14 @@ def send_email_via_gmail(service, email_message):
         return {'success': False, 'error': str(error)}
 
 # A/B Testing functions
-def assign_variation(recipient_email, variations):
-    """Assign recipient to a variation using consistent hashing"""
-    # Use email hash to ensure consistent assignment
-    email_hash = hashlib.md5(recipient_email.encode()).hexdigest()
-    hash_int = int(email_hash[:8], 16)
-    variation_index = hash_int % len(variations)
-    return variations[variation_index]['variation_name']
+# Removed assign_variation as it will be handled directly in upload_recipients now
+# def assign_variation(recipient_email, variations):
+#     """Assign recipient to a variation using consistent hashing"""
+#     # Use email hash to ensure consistent assignment
+#     email_hash = hashlib.md5(recipient_email.encode()).hexdigest()
+#     hash_int = int(email_hash[:8], 16)
+#     variation_index = hash_int % len(variations)
+#     return variations[variation_index]['variation_name']
 
 def calculate_ab_metrics(campaign_id):
     """Calculate A/B testing metrics for a campaign"""
@@ -550,34 +551,56 @@ def upload_recipients():
         # Read CSV file
         stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
         csv_input = csv.DictReader(stream)
+        recipients_data = list(csv_input) # Read all recipients into a list
 
         # Get campaign variations
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        cursor.execute(sql.SQL('SELECT variation_name FROM email_variations WHERE campaign_id = %s'), [campaign_id])
-        variations = [{'variation_name': row[0]} for row in cursor.fetchall()]
+        cursor.execute(sql.SQL('SELECT variation_name FROM email_variations WHERE campaign_id = %s ORDER BY variation_name'), [campaign_id])
+        variations = [row[0] for row in cursor.fetchall()]
 
+        if not variations:
+            conn.close()
+            return jsonify({'success': False, 'error': 'No variations found for this campaign'})
+        
+        # --- Modified Logic for Even Distribution ---
+        random.shuffle(recipients_data) # Shuffle for randomness before assignment
+        
         recipients_added = 0
-
-        for row in csv_input:
+        total_recipients = len(recipients_data)
+        num_variations = len(variations)
+        
+        # Prepare a list of recipients with their assigned variation
+        recipients_to_insert = []
+        for i, row in enumerate(recipients_data):
             email = row.get('email', '').strip()
             if not email:
                 continue
 
-            # Assign variation
-            assigned_variation = assign_variation(email, variations)
+            # Assign variation in an alternating fashion
+            assigned_variation = variations[i % num_variations] 
+            
             tracking_id = str(uuid.uuid4())
 
-            cursor.execute(sql.SQL('''
-                INSERT INTO recipients (id, campaign_id, email_address, first_name, last_name, variation_assigned, tracking_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            '''), (
-                str(uuid.uuid4()), campaign_id, email,
-                row.get('first_name', ''), row.get('last_name', ''),
-                assigned_variation, tracking_id
+            recipients_to_insert.append((
+                str(uuid.uuid4()), 
+                campaign_id, 
+                email,
+                row.get('first_name', ''), 
+                row.get('last_name', ''),
+                assigned_variation, 
+                tracking_id
             ))
             recipients_added += 1
+
+        # Use executemany for efficiency
+        if recipients_to_insert:
+            insert_query = sql.SQL('''
+                INSERT INTO recipients (id, campaign_id, email_address, first_name, last_name, variation_assigned, tracking_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ''')
+            cursor.executemany(insert_query, recipients_to_insert)
 
         # Update campaign total recipients
         cursor.execute(sql.SQL('UPDATE campaigns SET total_recipients = %s WHERE id = %s'), (recipients_added, campaign_id))
@@ -894,271 +917,22 @@ def list_template_categories():
 def list_template_files(category):
     base_dir = os.path.join(os.getcwd(), 'html_templates', category)
     if not os.path.exists(base_dir):
-        return jsonify({'success': False, 'error': 'Category not found'})
-    files = [f for f in os.listdir(base_dir) if f.endswith('.html')]
+        return jsonify({'success': False, 'error': 'Category not found'}), 404
+    
+    files = [f for f in os.listdir(base_dir) if os.path.isfile(os.path.join(base_dir, f)) and f.endswith('.html')]
     return jsonify({'success': True, 'files': files})
 
 @app.route('/get-template-content/<category>/<filename>')
 def get_template_content(category, filename):
-    base_dir = os.path.join(os.getcwd(), 'html_templates', category)
-    file_path = os.path.join(base_dir, filename)
+    file_path = os.path.join(os.getcwd(), 'html_templates', category, filename)
     if not os.path.exists(file_path):
-        return jsonify({'success': False, 'error': 'Template not found'})
+        return jsonify({'success': False, 'error': 'Template file not found'}), 404
+    
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
+    
     return jsonify({'success': True, 'content': content})
-
-@app.route('/get-campaign-variants/<campaign_id>')
-def get_campaign_variants(campaign_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(sql.SQL('SELECT variation_name, subject_line, email_body FROM email_variations WHERE campaign_id = %s'), [campaign_id])
-    variants = [{'name': row[0], 'subject': row[1], 'body': row[2]} for row in cursor.fetchall()]
-    cursor.close()
-    conn.close()
-    return jsonify({'success': True, 'variants': variants})
-
-
-@app.route('/integrate-content-template', methods=['POST'])
-def integrate_content_template():
-    data = request.get_json()
-    content = data.get('content')
-    template_html = data.get('template_html')
-
-    if not content or not template_html:
-        return jsonify({'success': False, 'error': 'Missing content or template_html'})
-
-    groq_api_key = os.getenv('GROQ_API_KEY')
-    if not groq_api_key:
-        return jsonify({'success': False, 'error': 'GROQ_API_KEY not set in environment'})
-
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {groq_api_key}",
-        "Content-Type": "application/json"
-    }
-
-    prompt = f"""You are an expert email formatter.
-Integrate the following content into the provided HTML template.
-Make sure to preserve styles and formatting.
-
-CONTENT:
-{content}
-
-TEMPLATE_HTML:
-{template_html}
-"""
-
-    payload = {
-        "model": "llama3-70b-8192",
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7
-    }
-
-    try:
-        print("Payload sent to Groq:")
-        print(json.dumps(payload, indent=2))
-
-        response = requests.post(url, headers=headers, json=payload)
-        print("Raw Groq response:")
-        print(response.text)
-
-        result = response.json()
-        raw_html = result['choices'][0]['message']['content']
-
-
-
-# Step 1: Remove markdown-style HTML block markers
-        if "```html" in raw_html:
-            raw_html = raw_html.split("```html", 1)[-1]
-        if "```" in raw_html:
-            raw_html = raw_html.split("```", 1)[0]
-
-# Step 2: Strip typical AI wrap-up lines
-        wrapup_phrases = [
-        "Let me know if you need any further assistance",
-        "Let me know if you need anything else",
-        "Hope this helps",
-        "Have a great day",
-        "Happy to help"
-        ]
-        for phrase in wrapup_phrases:
-            if phrase.lower() in raw_html.lower():
-                raw_html = raw_html[:raw_html.lower().find(phrase.lower())].strip()
-
-# Step 3: Remove "Here is..." intro text
-        raw_html = raw_html.strip()
-        if raw_html.lower().startswith("here is"):
-            raw_html = raw_html[raw_html.find("<"):]
-
-# Inline CSS
-        finalized_html = transform(raw_html)
-
-
-        return jsonify({'success': True, 'finalized_html': finalized_html})
-
-    except Exception as e:
-        print(f"Error parsing Groq response: {e}")
-        return jsonify({'success': False, 'error': f'Parsing error: {str(e)}'})
-
-
-"""@app.route('/send-finalized-mail', methods=['POST'])
-def send_finalized_mail():
-    # Expects: subject, html_body, sender_csv (file upload)
-    subject = request.form.get('subject')
-    html_body = request.form.get('html_body')
-    if 'sender_csv' not in request.files:
-        return jsonify({'success': False, 'error': 'No CSV file uploaded'})
-    file = request.files['sender_csv']
-    if file.filename == '':
-        return jsonify({'success': False, 'error': 'No file selected'})
-    stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-    csv_input = csv.DictReader(stream)
-    # Use Gmail API to send emails (reuse authenticate_gmail and create_email_message)
-    service = authenticate_gmail()
-    sent_count = 0
-    for row in csv_input:
-        to_email = row.get('email', '').strip()
-        if not to_email:
-            continue
-        msg = create_email_message(to_email, subject, html_body, tracking_id=str(uuid.uuid4()))
-        result = send_email_via_gmail(service, msg)
-        if result.get('success'):
-            sent_count += 1
-    return jsonify({'success': True, 'sent_count': sent_count})"""
-
-@app.route('/send-optimized-schedule', methods=['POST'])
-def send_optimized_schedule():
-    """Send finalized emails to customers based on open-time batches"""
-
-    print("📩 Starting optimized send route...")
-
-    if 'customer_csv' not in request.files:
-        return jsonify({'success': False, 'error': 'CSV file not uploaded'})
-
-    subject = request.form.get('subject')
-    html_body = request.form.get('html_body')
-
-    print(f"✅ Received subject: {subject[:30]}...")
-    print(f"✅ HTML body length: {len(html_body)}")
-
-    if not subject or not html_body:
-        return jsonify({'success': False, 'error': 'Subject and HTML body are required.'})
-
-    file = request.files['customer_csv']
-
-    try:
-        import pandas as pd
-        import datetime
-        import time
-
-        df = pd.read_csv(file)
-        if 'email' not in df.columns or 'opentime' not in df.columns:
-            return jsonify({'success': False, 'error': "CSV must have 'email' and 'opentime' columns."})
-
-        # Define batch times
-        BATCH_SEND_TIMES = {
-            "Morning Batch 1": (8, 0),
-            "Morning Batch 2": (11, 0),
-            "Evening Batch 1": (14, 0),
-            "Evening Batch 2": (19, 0),
-            "Night Batch 1": (00, 30),
-            "Night Batch 2":(4, 45)
-        }
-
-        service = authenticate_gmail()
-        if not service:
-            print("❌ Gmail authentication failed.")
-            return jsonify({'success': False, 'error': 'Gmail authentication failed'})
-
-        # Classify emails into batches
-        batches_to_process = {batch: [] for batch in BATCH_SEND_TIMES}
-        for _, row in df.iterrows():
-            email = str(row.get('email', '')).strip()
-            opentime = str(row.get('opentime', '')).strip()
-
-            if not email or not opentime:
-                continue
-
-            try:
-                open_time = datetime.datetime.strptime(opentime, "%H:%M").time()
-            except ValueError:
-                continue
-
-            if datetime.time(6, 0) <= open_time < datetime.time(10, 0):
-                batch = "Morning Batch 1"
-            elif datetime.time(10, 0) <= open_time < datetime.time(12, 0):
-                batch = "Morning Batch 2"
-            elif datetime.time(12, 0) <= open_time < datetime.time(17, 0):
-                batch = "Evening Batch 1"
-            elif datetime.time(17, 0) <= open_time < datetime.time(21, 0):
-                batch = "Evening Batch 2"
-            elif (datetime.time(21, 0) <= open_time <= datetime.time(23, 59)) or (datetime.time(0, 0) <= open_time < datetime.time(1, 0)):
-                batch = "Night Batch 1"
-            elif datetime.time(1, 0) <= open_time < datetime.time(6, 0):
-                batch = "Night Batch 2"
-            else:
-                batch = "Unknown Batch"
-
-            batches_to_process[batch].append(email)
-
-        # Schedule batches
-        now = datetime.datetime.now()
-        scheduled = []
-        sorted_batches = []
-
-        for batch, recipients in batches_to_process.items():
-            if not recipients:
-                continue
-
-            h, m = BATCH_SEND_TIMES[batch]
-            send_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if send_time < now:
-                send_time += datetime.timedelta(days=1)
-
-            sorted_batches.append((send_time, batch, recipients))
-
-        sorted_batches.sort()
-
-        for send_time, batch, recipients in sorted_batches:
-            wait_seconds = (send_time - datetime.datetime.now()).total_seconds()
-            print(f"\n📤 Preparing batch '{batch}' for {len(recipients)} recipients at {send_time.strftime('%H:%M')}")
-            if wait_seconds > 0:
-                print(f"⏳ Waiting {int(wait_seconds)}s until batch '{batch}' at {send_time.strftime('%H:%M')}...")
-                time.sleep(wait_seconds)
-
-            print(f"📤 Sending batch '{batch}' to {len(recipients)} recipients.")
-            for email in recipients:
-                body = f"Hello,<br><br>This message is scheduled for <b>{batch}</b> based on your past open time preferences.<br><br>Stay tuned!<br><br>Regards,<br>Campaign Team"
-                msg = create_email_message(email, subject, html_body, str(uuid.uuid4()))
-                result = send_email_via_gmail(service, msg)
-                if result.get("success"):
-                    print(f"✅ Email sent to {email}")
-                else:
-                    print(f"❌ Failed to send email to {email}: {result.get('error')}")
-            scheduled.append((batch, len(recipients)))
-
-        print("\n✅ All batches processed.")
-        return jsonify({'success': True, 'scheduled_batches': scheduled})
-
-    except Exception as e:
-        print(f"❌ Error in send_optimized_schedule: {e}")
-        return jsonify({'success': False, 'error': str(e)})
-
 
 
 if __name__ == '__main__':
-    # This block will now only run when you execute 'python final.py' directly.
-    # The init_db() call for Gunicorn is moved above.
-    print("🧪 A/B Testing Email Marketing App")
-    print("✉️  Gmail API Integration Ready")
-    print("📊 Campaign Tracking Enabled")
-    print("🎯 Endpoints:")
-    print(f"   - Main: {BASE_URL}")
-    print(f"   - Dashboard: {BASE_URL}/ab-dashboard")
-    print(f"   - Campaigns: {BASE_URL}/campaigns")
-
-    app.run(debug=True, host='0.0.0.0', port=PORT)
+    app.run(debug=True, port=PORT, host='0.0.0.0')
