@@ -1150,7 +1150,7 @@ def send_optimized_schedule():
 
 
 
-if _name_ == '_main_':
+if __name__ == '__main__':
     # This block will now only run when you execute 'python final.py' directly.
     # The init_db() call for Gunicorn is moved above.
     print("🧪 A/B Testing Email Marketing App")
